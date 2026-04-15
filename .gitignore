@@ -1,0 +1,10 @@
+Artifacts/
+final_model/
+logs/
+prediction_output/
+valid_data/
+__pycache__/
+*.pkl
+*.npy
+*.log
+.env
