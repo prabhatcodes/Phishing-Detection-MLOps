@@ -113,6 +113,7 @@ jobs:
             --name "$CONTAINER_NAME" \
             --restart unless-stopped \
             -p "$APP_PORT:$APP_PORT" \
+            -v networksecurity-model:/app/final_model \
             -e AWS_REGION="${{ secrets.AWS_REGION }}" \
             -e TRAINING_BUCKET_NAME="${{ secrets.TRAINING_BUCKET_NAME }}" \
             -e TRAIN_API_KEY="${{ secrets.TRAIN_API_KEY }}" \
