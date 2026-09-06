@@ -1,0 +1,24 @@
+.git
+.github
+.venv
+venv
+__pycache__
+**/__pycache__
+*.pyc
+*.pyo
+
+# generated at runtime, must never be baked into an image
+Artifacts/
+mlruns/
+mlflow.db
+logs/
+prediction_output/
+final_model/
+valid_data/
+
+# local-only
+.env
+.pytest_cache
+tests/
+*.md
+!README.md

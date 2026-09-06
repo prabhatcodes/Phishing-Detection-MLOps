@@ -1,12 +1,12 @@
 import os
-import sys
+
 import numpy as np
-import pandas as pd
 
 """
 defining common constant variable for training pipeline
 """
 TARGET_COLUMN = "Result"
+RANDOM_STATE: int = 42
 PIPELINE_NAME: str = "NetworkSecurity"
 ARTIFACT_DIR: str = "Artifacts"
 FILE_NAME: str = "phisingData.csv"
@@ -70,4 +70,6 @@ MODEL_TRAINER_TRAINED_MODEL_NAME: str = "model.pkl"
 MODEL_TRAINER_EXPECTED_SCORE: float = 0.6
 MODEL_TRAINER_OVER_FIITING_UNDER_FITTING_THRESHOLD: float = 0.05
 
-TRAINING_BUCKET_NAME = "netwworksecurity"
+# Set TRAINING_BUCKET_NAME in the environment to enable S3 artifact sync.
+# When unset, the pipeline runs fully locally and skips the sync step.
+TRAINING_BUCKET_NAME = os.getenv("TRAINING_BUCKET_NAME", "")

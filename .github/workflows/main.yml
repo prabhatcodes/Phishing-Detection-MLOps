@@ -1,44 +1,55 @@
-name: workflow
+name: CI/CD
 
 on:
   push:
-    branches:
-      - main
-    paths-ignore:
-      - 'README.md'
+    branches: [main]
+    paths-ignore: ['**.md']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
 
-permissions:
-  id-token: write
-  contents: read
+env:
+  IMAGE_NAME: ${{ secrets.ECR_REPOSITORY_NAME }}
+  CONTAINER_NAME: networksecurity
+  APP_PORT: 8080
 
 jobs:
-  integration:
-    name: Continuous Integration
+  ci:
+    name: Lint and test
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
-      - name: Lint code
-        run: echo "Linting repository"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
 
-      - name: Run unit tests
-        run: echo "Running unit tests"
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
 
-  build-and-push-ecr-image:
-    name: Continuous Delivery
-    needs: integration
+      - name: Lint
+        run: ruff check networksecurity app.py main.py tests
+
+      - name: Run tests
+        run: pytest -q
+
+  build-and-push:
+    name: Build and push to ECR
+    needs: ci
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tag }}
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
-      - name: Install Utilities
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y jq unzip
+      - name: Compute image tag
+        id: meta
+        run: echo "tag=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v1
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -46,31 +57,32 @@ jobs:
 
       - name: Login to Amazon ECR
         id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v1
+        uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build, tag, and push image to Amazon ECR
-        id: build-image
-        env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY_NAME }}
-          IMAGE_TAG: latest
-        run: |
-          # Build a docker container and
-          # push it to ECR so that it can
-          # be deployed to ECS.
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-          echo "::set-output name=image::$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
 
-  Continuous-Deployment:
-    needs: build-and-push-ecr-image
+      # Tagged with the commit SHA as well as latest, so a bad deploy can be
+      # rolled back to a specific known-good image.
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          build-args: GIT_SHA=${{ github.sha }}
+          tags: |
+            ${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY_NAME }}:${{ steps.meta.outputs.tag }}
+            ${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY_NAME }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Deploy to EC2
+    needs: build-and-push
     runs-on: self-hosted
     steps:
-      - name: Checkout
-        uses: actions/checkout@v3
-
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v1
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -78,23 +90,53 @@ jobs:
 
       - name: Login to Amazon ECR
         id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v1
-      
-      
-      - name: Pull latest images
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Pull image
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          TAG: ${{ needs.build-and-push.outputs.image_tag }}
+        run: docker pull "$REGISTRY/$IMAGE_NAME:$TAG"
+
+      # This step was commented out in the original workflow, so every deploy
+      # after the first failed with "container name already in use".
+      - name: Stop and remove the previous container
         run: |
-         docker pull ${{secrets.AWS_ECR_LOGIN_URI}}/${{ secrets.ECR_REPOSITORY_NAME }}:latest
-         
-      #- name: Stop and remove  container if running
-       # run: |
-        # docker ps -q --filter "name=networksecurity" | grep -q . && docker stop networksecurity && docker rm -fv networksecurity
-       
-      - name: Run Docker Image to serve users
+          docker rm -f "$CONTAINER_NAME" 2>/dev/null || true
+
+      - name: Run new container
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          TAG: ${{ needs.build-and-push.outputs.image_tag }}
         run: |
-         docker run -d -p 8080:8080 --ipc="host" --name=networksecurity -e 'AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}' -e 'AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}' -e 'AWS_REGION=${{ secrets.AWS_REGION }}'  ${{secrets.AWS_ECR_LOGIN_URI}}/${{ secrets.ECR_REPOSITORY_NAME }}:latest
-      - name: Clean previous images and containers
+          docker run -d \
+            --name "$CONTAINER_NAME" \
+            --restart unless-stopped \
+            -p "$APP_PORT:$APP_PORT" \
+            -e AWS_REGION="${{ secrets.AWS_REGION }}" \
+            -e TRAINING_BUCKET_NAME="${{ secrets.TRAINING_BUCKET_NAME }}" \
+            -e TRAIN_API_KEY="${{ secrets.TRAIN_API_KEY }}" \
+            -e MONGO_DB_URL="${{ secrets.MONGODB_URL_KEY }}" \
+            -e MLFLOW_TRACKING_URI="${{ secrets.MLFLOW_TRACKING_URI }}" \
+            -e MLFLOW_TRACKING_USERNAME="${{ secrets.MLFLOW_TRACKING_USERNAME }}" \
+            -e MLFLOW_TRACKING_PASSWORD="${{ secrets.MLFLOW_TRACKING_PASSWORD }}" \
+            "$REGISTRY/$IMAGE_NAME:$TAG"
+
+      # A deploy that starts a container which then crashes is not a success.
+      - name: Wait for health check
         run: |
-         docker system prune -f# feat: EC2 self-hosted runner deploy step added
-# feat: EC2 self-hosted runner deploy step
-# feat: EC2 self-hosted runner deploy step
-# feat: EC2 self-hosted runner deploy step
+          for i in $(seq 1 20); do
+            if curl -fsS "http://localhost:$APP_PORT/health" >/dev/null; then
+              echo "healthy after ${i} attempt(s)"
+              curl -s "http://localhost:$APP_PORT/health"
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "::error::container failed health check"
+          docker logs --tail 100 "$CONTAINER_NAME"
+          exit 1
+
+      - name: Prune old images
+        if: always()
+        run: docker image prune -af --filter "until=168h"

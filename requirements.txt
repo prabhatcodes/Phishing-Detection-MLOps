@@ -1,16 +1,27 @@
-python-dotenv
-pandas
-numpy
-pymongo
-certifi
-pymongo[srv]
-scikit-learn
-mlflow
-pyaml
-dagshub
-fastapi
-uvicorn
-python-multipart
+# Pinned so the image, CI, and a laptop all resolve to the same versions.
+# Regenerate with: pip install -U <pkg> && pip freeze | grep -i <pkg>
+certifi==2026.7.22
+python-dotenv==1.2.3
+PyYAML==6.0.3
 
+# data + ML
+numpy==2.4.6
+pandas==3.0.5
+scipy==1.17.1
+scikit-learn==1.9.0
 
-##-e .
+# experiment tracking (optional at runtime; skipped when MLFLOW_TRACKING_URI is unset)
+mlflow==3.16.0
+
+# data source (optional; falls back to the bundled CSV when unset)
+pymongo==4.18.0
+dnspython==2.8.0
+
+# serving
+fastapi==0.141.1
+uvicorn==0.52.4
+python-multipart==0.0.32
+Jinja2==3.1.6
+
+# S3 artifact sync (replaces the awscli shell-out)
+boto3==1.43.89
