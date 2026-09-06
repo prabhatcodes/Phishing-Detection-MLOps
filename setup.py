@@ -32,8 +32,8 @@ def get_requirements()->List[str]:
 setup(
     name="NetworkSecurity",
     version="0.0.1",
-    author="Suyash",
- author_email="suyash.pg25@nsut.ac.in",
+    author="Prabhat Singh Tomar",
+    author_email="prabhat@example.com",
     packages=find_packages(),
     install_requires=get_requirements()
 )

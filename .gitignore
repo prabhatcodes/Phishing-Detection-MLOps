@@ -1,10 +1,25 @@
+# generated artifacts
 Artifacts/
 final_model/
 logs/
 prediction_output/
 valid_data/
+mlruns/
+mlflow.db
+
+# python
 __pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# data / model blobs
 *.pkl
 *.npy
 *.log
+
+# secrets
 .env
